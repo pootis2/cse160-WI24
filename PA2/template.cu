@@ -46,7 +46,7 @@ int main(int argc, char **argv) {
   gpuTKTime_stop(GPU, "Copying input memory to the GPU.");
 
   //@@ Initialize the grid and block dimensions here
-  dim3 grid_size(ceil(inputLength / 1024));
+  dim3 grid_size(inputLength / 1024 + 1);
   dim3 block_size(1024);
 
   gpuTKTime_start(Compute, "Performing CUDA computation");
