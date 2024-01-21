@@ -2,6 +2,10 @@
 
 __global__ void vecAdd(float *in1, float *in2, float *out, int len) {
   //@@ Insert code to implement vector addition here
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if(i < len){
+    out[i] = in1[i] + in2[i];
+  }
 }
 
 int main(int argc, char **argv) {
@@ -28,29 +32,45 @@ int main(int argc, char **argv) {
 
   gpuTKTime_start(GPU, "Allocating GPU memory.");
   //@@ Allocate GPU memory here
+  cudaMalloc((void**) &deviceInput1, inputLength*sizeof(float));
+  cudaMalloc((void**) &deviceInput2, inputLength*sizeof(float));
+  cudaMalloc((void**) &deviceOutput, inputLength*sizeof(float));
 
   gpuTKTime_stop(GPU, "Allocating GPU memory.");
 
   gpuTKTime_start(GPU, "Copying input memory to the GPU.");
   //@@ Copy memory to the GPU here
+  cudaMemcpy(deviceInput1, hostInput1, inputLength*sizeof(float)), cudaMemcpyHostToDevice);
+  cudaMemcpy(deviceInput2, hostInput2, inputLength*sizeof(float)), cudaMemcpyHostToDevice);
 
   gpuTKTime_stop(GPU, "Copying input memory to the GPU.");
 
   //@@ Initialize the grid and block dimensions here
+  dim3 grid_size(inputLength/256);
+  if (inputLength % 128){
+    
+  }
+grid_size.x++;
+  dim3 block_size(256);
 
   gpuTKTime_start(Compute, "Performing CUDA computation");
   //@@ Launch the GPU Kernel here
+  vecAdd<<<grid_size, block_size>>>(deviceInput1, deviceInput2, deviceOutput, inputLength);
 
   cudaDeviceSynchronize();
   gpuTKTime_stop(Compute, "Performing CUDA computation");
 
   gpuTKTime_start(Copy, "Copying output memory to the CPU");
   //@@ Copy the GPU memory back to the CPU here
+  cudaMemcpy(hostOutput, deviceOutput, inputLength*sizeof(float)), cudaMemcpyDeviceToHost);
 
   gpuTKTime_stop(Copy, "Copying output memory to the CPU");
 
   gpuTKTime_start(GPU, "Freeing GPU Memory");
   //@@ Free the GPU memory here
+  cudaFree(deviceInput1);
+  cudaFree(deviceInput2);
+  cudaFree(deviceOutput);
 
   gpuTKTime_stop(GPU, "Freeing GPU Memory");
 
