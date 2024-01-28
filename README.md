@@ -9,7 +9,7 @@ You can login to DSMLP using by `ssh USERNAME@dsmlp-login.ucsd.edu`. Your userna
 
 Follow the steps in this [link](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent?platform=mac#about-ssh-key-passphrases) to generate a key pair (Follow the guide till step 3 under 'Adding your SSH key to the ssh-agent').
 
-DSMLP uses containers to set up its software environment. You must create a container that provides access to a GPU with CUDA installed using the command ` launch.sh -g 1 -s -i ucsdets/nvcr-cuda:latest -W CSE160_WI24_A00`
+DSMLP uses containers to set up its software environment. You must create a container that provides access to a GPU with CUDA installed using the command ` launch.sh -g 1 -s -i ghcr.io/ucsd-ets/nvcr-cuda:main -W CSE160_WI24_A00`
 
 Once you have that container, you can compile and run the Makefiles in the PA directories.
 
@@ -38,7 +38,7 @@ HostName dsmlp-login.ucsd.edu
 HostKeyAlias vscode-dsmlp
 IdentitiesOnly yes
 User 'active directory username'
-ProxyCommand ssh -i 'path to local private key' 'active directory username'@dsmlp-login.ucsd.edu launch-cse160-ssh.sh -g 1 -p normal
+ProxyCommand ssh -i 'path to local private key' 'active directory username'@dsmlp-login.ucsd.edu launch-cse160-ssh-wi24.sh -g 1 -p normal -P Always
 ```
 
 7. Click on the >< key at the bottom left corner and then click on Connect to Host ... You should see a vscode-dsmlp option. Click on it to start your session. 
