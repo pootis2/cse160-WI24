@@ -17,6 +17,25 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *C,
                                      int numCRows, int numCColumns) {
   //@@ Insert code to implement matrix multiplication here
   //@@ You have to use shared memory for this lab
+  __shared__ float subTileM[16][16];
+  __shared__ float subTileN[16][16];
+
+  int bx = blockIdx.x;  int by = blockIdx.y;
+  int tx = threadIdx.x; int ty = threadIdx.y;
+
+  int Row = by * 16 + ty;
+  int Col = bx * 16 + tx;
+  float Pvalue = 0;
+
+  for (int m = 0; m < ceil((float)numAColumns/16); ++m){
+    subTileM[ty][tx] = A[Row*numAColumns+m*16+tx];
+    subTileN[ty][tx] = B[(m*16+ty)*numBColumns+Col];
+    __syncthreads();
+    for (int k = 0; k < 16; ++k)
+      Pvalue += subTileM[ty][k] * subTileN[k][tx];
+    __syncthreads();
+  }
+  C[Row*numCColumns + Col] = Pvalue;
 }
 
 int main(int argc, char **argv) {
@@ -43,9 +62,10 @@ int main(int argc, char **argv) {
   hostB = (float *)gpuTKImport(gpuTKArg_getInputFile(args, 1), &numBRows,
                             &numBColumns);
   //@@ Set numCRows and numCColumns
-  numCRows    = 0;
-  numCColumns = 0;
+  numCRows    = numARows;
+  numCColumns = numBColumns;
   //@@ Allocate the hostC matrix
+  hostC = (float*)malloc(numCRows * numCColumns * sizeof(float));
   gpuTKTime_stop(Generic, "Importing data and creating memory on host");
 
   gpuTKLog(TRACE, "The dimensions of A are ", numARows, " x ", numAColumns);
