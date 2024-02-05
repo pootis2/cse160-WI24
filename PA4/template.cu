@@ -28,8 +28,16 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *C,
   float Pvalue = 0;
 
   for (int m = 0; m < ceil((float)numAColumns/16); ++m){
-    subTileM[ty][tx] = A[Row*numAColumns+m*16+tx];
-    subTileN[ty][tx] = B[(m*16+ty)*numBColumns+Col];
+    if ((Row < numARows) && (m * 16 + tx < numAColumns))
+      subTileM[ty][tx] = A[Row*numAColumns+m*16+tx];
+    else
+      subTileM[ty][tx] = 0;
+
+    if ((Col < numBColumns) && (m * 16 + ty < numAColumns))
+      subTileN[ty][tx] = B[(m*16+ty)*numBColumns+Col];
+    else
+      subTileN[ty][tx] = 0;
+
     __syncthreads();
     for (int k = 0; k < 16; ++k)
       Pvalue += subTileM[ty][k] * subTileN[k][tx];
