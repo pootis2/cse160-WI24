@@ -66,6 +66,7 @@ int main(int argc, char **argv) {
   numCColumns = numBColumns;
   //@@ Allocate the hostC matrix
   hostC = (float*)malloc(numCRows * numCColumns * sizeof(float));
+
   gpuTKTime_stop(Generic, "Importing data and creating memory on host");
 
   gpuTKLog(TRACE, "The dimensions of A are ", numARows, " x ", numAColumns);
