@@ -17,12 +17,12 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *C,
                                      int numCRows, int numCColumns) {
   //@@ Insert code to implement matrix multiplication here
   //@@ You have to use shared memory for this lab
-  int TILE_WIDTH = 16;
-  __shared__ float subTileM[TILE_WIDTH][TILE_WIDTH];
-  __shared__ float subTileN[TILE_WIDTH][TILE_WIDTH];
+  __shared__ float subTileM[16][16];
+  __shared__ float subTileN[16][16];
 
   int bx = blockIdx.x;  int by = blockIdx.y;
   int tx = threadIdx.x; int ty = threadIdx.y;
+  int TILE_WIDTH = 16;
 
   int Row = by * TILE_WIDTH + ty;
   int Col = bx * TILE_WIDTH + tx;
