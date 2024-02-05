@@ -17,33 +17,35 @@ __global__ void matrixMultiplyShared(float *A, float *B, float *C,
                                      int numCRows, int numCColumns) {
   //@@ Insert code to implement matrix multiplication here
   //@@ You have to use shared memory for this lab
-  __shared__ float subTileM[16][16];
-  __shared__ float subTileN[16][16];
+  int TILE_WIDTH = 16;
+  __shared__ float subTileM[TILE_WIDTH][TILE_WIDTH];
+  __shared__ float subTileN[TILE_WIDTH][TILE_WIDTH];
 
   int bx = blockIdx.x;  int by = blockIdx.y;
   int tx = threadIdx.x; int ty = threadIdx.y;
 
-  int Row = by * 16 + ty;
-  int Col = bx * 16 + tx;
+  int Row = by * TILE_WIDTH + ty;
+  int Col = bx * TILE_WIDTH + tx;
   float Pvalue = 0;
 
-  for (int m = 0; m < ceil((float)numAColumns/16); ++m){
-    if ((Row < numARows) && (m * 16 + tx < numAColumns))
-      subTileM[ty][tx] = A[Row*numAColumns+m*16+tx];
+  for(int m = 0; m < ceil((float)numAColumns/TILE_WIDTH); ++m){
+    if((Row < numARows) && (m * TILE_WIDTH + tx < numAColumns))
+      subTileM[ty][tx] = A[Row * numAColumns + m * TILE_WIDTH + tx];
     else
       subTileM[ty][tx] = 0;
 
-    if ((Col < numBColumns) && (m * 16 + ty < numAColumns))
-      subTileN[ty][tx] = B[(m*16+ty)*numBColumns+Col];
+    if((Col < numBColumns) && (m * TILE_WIDTH + ty < numBRows))
+      subTileN[ty][tx] = B[(m * TILE_WIDTH + ty) * numBColumns + Col];
     else
       subTileN[ty][tx] = 0;
 
     __syncthreads();
-    for (int k = 0; k < 16; ++k)
+    for(int k = 0; k < TILE_WIDTH; ++k)
       Pvalue += subTileM[ty][k] * subTileN[k][tx];
     __syncthreads();
   }
-  C[Row*numCColumns + Col] = Pvalue;
+  if((Row < numCRows) && (Col < numCColumns))
+    C[Row*numCColumns + Col] = Pvalue;
 }
 
 int main(int argc, char **argv) {
@@ -61,6 +63,7 @@ int main(int argc, char **argv) {
   int numCRows;    // number of rows in the matrix C (you have to set this)
   int numCColumns; // number of columns in the matrix C (you have to set
                    // this)
+  int BLOCK_WIDTH = 16;
 
   args = gpuTKArg_read(argc, argv);
 
@@ -96,8 +99,8 @@ int main(int argc, char **argv) {
   gpuTKTime_stop(GPU, "Copying input memory to the GPU.");
 
   //@@ Initialize the grid and block dimensions here
-  dim3 dimGrid(ceil((float)numCColumns/16), ceil((float)numCRows/16), 1);
-  dim3 dimBlock(16, 16, 1);
+  dim3 dimGrid(ceil((float)numCColumns/BLOCK_WIDTH), ceil((float)numCRows/BLOCK_WIDTH), 1);
+  dim3 dimBlock(BLOCK_WIDTH, BLOCK_WIDTH, 1);
 
   gpuTKTime_start(Compute, "Performing CUDA computation");
   //@@ Launch the GPU Kernel here
