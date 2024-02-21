@@ -5,129 +5,133 @@
     cudaError_t err = stmt;                                               \
     if (err != cudaSuccess) {                                             \
       gpuTKLog(ERROR, "Failed to run stmt ", #stmt);                         \
-      gpuTKLog(ERROR, "Got CUDA error ...  ", cudaGetErrorString(err));      \
       return -1;                                                          \
     }                                                                     \
   } while (0)
 
-// Compute C = A * B
-__global__ void matrixMultiplyShared(float *A, float *B, float *C,
-                                     int numARows, int numAColumns,
-                                     int numBRows, int numBColumns,
-                                     int numCRows, int numCColumns) {
-  //@@ Insert code to implement matrix multiplication here
-  //@@ You have to use shared memory for this lab
-  __shared__ float subTileM[16][16];
-  __shared__ float subTileN[16][16];
+#define Mask_width 5
+#define Mask_radius Mask_width / 2
+#define TILE_WIDTH 16
+#define w (TILE_WIDTH + Mask_width - 1)
+#define clamp(x) (min(max((x), 0.0), 1.0))
 
-  int bx = blockIdx.x;  int by = blockIdx.y;
-  int tx = threadIdx.x; int ty = threadIdx.y;
-  int TILE_WIDTH = 16;
+//@@ INSERT CODE HERE
+__global__ void convolution(float *image, const float * __restrict__ mask, float *out, int channels, int width, int height){
 
-  int Row = by * TILE_WIDTH + ty;
-  int Col = bx * TILE_WIDTH + tx;
-  float Pvalue = 0;
+    //__shared__ float subInput[w][w];
 
-  for(int m = 0; m < ceil((float)numAColumns/TILE_WIDTH); ++m){
-    if((Row < numARows) && (m * TILE_WIDTH + tx < numAColumns))
-      subTileM[ty][tx] = A[Row * numAColumns + m * TILE_WIDTH + tx];
-    else
-      subTileM[ty][tx] = 0;
+    //blocks/threads in x and y direction
+    int tx = threadIdx.x; int bx = blockIdx.x;
+    int ty = threadIdx.y; int by = blockIdx.y; 
 
-    if((Col < numBColumns) && (m * TILE_WIDTH + ty < numBRows))
-      subTileN[ty][tx] = B[(m * TILE_WIDTH + ty) * numBColumns + Col];
-    else
-      subTileN[ty][tx] = 0;
-
-    __syncthreads();
-    for(int k = 0; k < TILE_WIDTH; ++k)
-      Pvalue += subTileM[ty][k] * subTileN[k][tx];
-    __syncthreads();
-  }
-  if((Row < numCRows) && (Col < numCColumns))
-    C[Row*numCColumns + Col] = Pvalue;
+    int col = bx * width + tx; //col for output/tile
+    int row = by * height + ty; //row for output/tile
+    int xOffset = 0; int imagePixel = 0;
+    int yOffset = 0; int maskValue = 0;
+    if (col < width && row < height){
+        for(int k = 0; k < channels; k++){
+            float accum = 0;
+            for(int y = -Mask_radius; y < Mask_radius+1; y++){
+                for(int x = -Mask_radius; x < Mask_radius+1; y++){
+                    xOffset = col + x;
+                    yOffset = row + y;
+                    if (xOffset >= 0 && xOffset < width && yOffset >= 0 && yOffset < height){
+                        imagePixel = image[(yOffset * width + xOffset) * channels + k];
+                        maskValue = mask[(y+Mask_radius)*Mask_width+x+Mask_radius];
+                        accum += imagePixel * maskValue;
+                    }
+                }
+            }
+            out[(row * width + col)*channels + k] = clamp(accum, 0, 1);
+        }
+    }
 }
 
-int main(int argc, char **argv) {
-  gpuTKArg_t args;
-  float *hostA; // The A matrix
-  float *hostB; // The B matrix
-  float *hostC; // The output C matrix
-  float *deviceA;
-  float *deviceB;
-  float *deviceC;
-  int numARows;    // number of rows in the matrix A
-  int numAColumns; // number of columns in the matrix A
-  int numBRows;    // number of rows in the matrix B
-  int numBColumns; // number of columns in the matrix B
-  int numCRows;    // number of rows in the matrix C (you have to set this)
-  int numCColumns; // number of columns in the matrix C (you have to set
-                   // this)
-  int BLOCK_WIDTH = 16;
+int main(int argc, char *argv[]) {
+  gpuTKArg_t arg;
+  int maskRows;
+  int maskColumns;
+  int imageChannels;
+  int imageWidth;
+  int imageHeight;
+  char *inputImageFile;
+  char *inputMaskFile;
+  gpuTKImage_t inputImage;
+  gpuTKImage_t outputImage;
+  float *hostInputImageData;
+  float *hostOutputImageData;
+  float *hostMaskData;
+  float *deviceInputImageData;
+  float *deviceOutputImageData;
+  float *deviceMaskData;
 
-  args = gpuTKArg_read(argc, argv);
+  arg = gpuTKArg_read(argc, argv); /* parse the input arguments */
 
-  gpuTKTime_start(Generic, "Importing data and creating memory on host");
-  hostA = (float *)gpuTKImport(gpuTKArg_getInputFile(args, 0), &numARows,
-                            &numAColumns);
-  hostB = (float *)gpuTKImport(gpuTKArg_getInputFile(args, 1), &numBRows,
-                            &numBColumns);
-  //@@ Set numCRows and numCColumns
-  numCRows    = numARows;
-  numCColumns = numBColumns;
-  //@@ Allocate the hostC matrix
-  hostC = (float*)malloc(numCRows * numCColumns * sizeof(float));
+  inputImageFile = gpuTKArg_getInputFile(arg, 0);
+  inputMaskFile  = gpuTKArg_getInputFile(arg, 1);
 
-  gpuTKTime_stop(Generic, "Importing data and creating memory on host");
+  inputImage   = gpuTKImport(inputImageFile);
+  hostMaskData = (float *)gpuTKImport(inputMaskFile, &maskRows, &maskColumns);
 
-  gpuTKLog(TRACE, "The dimensions of A are ", numARows, " x ", numAColumns);
-  gpuTKLog(TRACE, "The dimensions of B are ", numBRows, " x ", numBColumns);
+  assert(maskRows == 5);    /* mask height is fixed to 5 in this mp */
+  assert(maskColumns == 5); /* mask width is fixed to 5 in this mp */
 
-  gpuTKTime_start(GPU, "Allocating GPU memory.");
-  //@@ Allocate GPU memory here
-  cudaMalloc((void **) &deviceA, numARows * numAColumns * sizeof(float));
-  cudaMalloc((void **) &deviceB, numBRows * numBColumns * sizeof(float));
-  cudaMalloc((void **) &deviceC, numCRows * numCColumns * sizeof(float));
+  imageWidth    = gpuTKImage_getWidth(inputImage);
+  imageHeight   = gpuTKImage_getHeight(inputImage);
+  imageChannels = gpuTKImage_getChannels(inputImage);
 
-  gpuTKTime_stop(GPU, "Allocating GPU memory.");
+  outputImage = gpuTKImage_new(imageWidth, imageHeight, imageChannels);
 
-  gpuTKTime_start(GPU, "Copying input memory to the GPU.");
-  //@@ Copy memory to the GPU here
-  cudaMemcpy(deviceA, hostA, numARows * numAColumns * sizeof(float), cudaMemcpyHostToDevice);
-  cudaMemcpy(deviceB, hostB, numBRows * numBColumns * sizeof(float), cudaMemcpyHostToDevice);
+  hostInputImageData  = gpuTKImage_getData(inputImage);
+  hostOutputImageData = gpuTKImage_getData(outputImage);
 
-  gpuTKTime_stop(GPU, "Copying input memory to the GPU.");
+  gpuTKTime_start(GPU, "Doing GPU Computation (memory + compute)");
 
-  //@@ Initialize the grid and block dimensions here
-  dim3 dimGrid(ceil((float)numCColumns/BLOCK_WIDTH), ceil((float)numCRows/BLOCK_WIDTH), 1);
-  dim3 dimBlock(BLOCK_WIDTH, BLOCK_WIDTH, 1);
+  gpuTKTime_start(GPU, "Doing GPU memory allocation");
+  //@@ INSERT CODE HERE
+  cudaMalloc((void **) &deviceInputImageData, imageWidth * imageHeight * imageChannels * sizeof(float));
+  cudaMalloc((void **) &deviceOutputImageData, imageWidth * imageHeight * imageChannels * sizeof(float));
+  cudaMalloc((void **) &deviceMaskData, maskColumns * maskRows * sizeof(float));
 
-  gpuTKTime_start(Compute, "Performing CUDA computation");
-  //@@ Launch the GPU Kernel here
-  matrixMultiplyShared<<<dimGrid,dimBlock>>>(deviceA, deviceB, deviceC, numARows, numAColumns, numBRows, numBColumns, numCRows, numCColumns);
+  gpuTKTime_stop(GPU, "Doing GPU memory allocation");
 
-  cudaDeviceSynchronize();
-  gpuTKTime_stop(Compute, "Performing CUDA computation");
+  gpuTKTime_start(Copy, "Copying data to the GPU");
+  //@@ INSERT CODE HERE
+  cudaMemcpy(deviceInputImageData, hostInputImageData, imageWidth * imageHeight * imageChannels * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(deviceOutputImageData, hostOutputImageData, imageWidth * imageHeight * imageChannels * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(deviceMaskData, hostMaskData, maskColumns * maskRows * sizeof(float), cudaMemcpyHostToDevice);
 
-  gpuTKTime_start(Copy, "Copying output memory to the CPU");
-  //@@ Copy the GPU memory back to the CPU here
-  cudaMemcpy(hostC, deviceC, numCRows * numCColumns * sizeof(float), cudaMemcpyDeviceToHost);
+  gpuTKTime_stop(Copy, "Copying data to the GPU");
 
-  gpuTKTime_stop(Copy, "Copying output memory to the CPU");
+  gpuTKTime_start(Compute, "Doing the computation on the GPU");
+  //@@ INSERT CODE HERE
+  dim3 dimBlock(TILE_WIDTH, TILE_WIDTH); 
+  dim3 dimGrid(ceil((float)imageWidth/TILE_WIDTH), ceil((float)imageHeight/TILE_WIDTH)); 
+  convolution<<<dimGrid, dimBlock>>>(hostInputImageData, hostMaskData,
+                                     hostOutputImageData, imageChannels,
+                                     imageWidth, imageHeight);
 
-  gpuTKTime_start(GPU, "Freeing GPU Memory");
-  //@@ Free the GPU memory here
-  cudaFree(deviceA);
-  cudaFree(deviceB);
-  cudaFree(deviceC);
+  gpuTKTime_stop(Compute, "Doing the computation on the GPU");
 
-  gpuTKTime_stop(GPU, "Freeing GPU Memory");
+  gpuTKTime_start(Copy, "Copying data from the GPU");
+  //@@ INSERT CODE HERE
+  cudaMemcpy(hostOutputImageData, deviceOutputImageData,
+             imageWidth * imageHeight * imageChannels * sizeof(float),
+             cudaMemcpyDeviceToHost);
+  gpuTKTime_stop(Copy, "Copying data from the GPU");
 
-  gpuTKSolution(args, hostC, numCRows, numCColumns);
+  gpuTKTime_stop(GPU, "Doing GPU Computation (memory + compute)");
 
-  free(hostA);
-  free(hostB);
-  free(hostC);
+  gpuTKSolution(arg, outputImage);
+
+  //@@ Insert code here
+  cudaFree(deviceInputImageData);
+  cudaFree(deviceMaskData);
+  cudaFree(deviceOutputImageData);
+
+  free(hostMaskData);
+  gpuTKImage_delete(outputImage);
+  gpuTKImage_delete(inputImage);
 
   return 0;
 }
