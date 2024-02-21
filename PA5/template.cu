@@ -42,7 +42,7 @@ __global__ void convolution(float *image, const float * __restrict__ mask, float
                     }
                 }
             }
-            out[(row * width + col)*channels + k] = clamp(accum, 0, 1);
+            out[(row * width + col)*channels + k] = clamp(accum);
         }
     }
 }
