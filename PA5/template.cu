@@ -18,33 +18,37 @@
 //@@ INSERT CODE HERE
 __global__ void convolution(float *image, const float * __restrict__ mask, float *out, int channels, int width, int height){
 
-    //__shared__ float subInput[w][w];
+    __shared__ float subInput[TILE_WIDTH][TILE_WIDTH][channels];
 
-    //blocks/threads in x and y direction
     int tx = threadIdx.x; int bx = blockIdx.x;
     int ty = threadIdx.y; int by = blockIdx.y; 
+    int tz = threadIdx.z;
 
-    int col = bx * width + tx; //col for output/tile
-    int row = by * height + ty; //row for output/tile
-    int xOffset = 0; int imagePixel = 0;
-    int yOffset = 0; int maskValue = 0;
-    if (col < width && row < height){
-        for(int k = 0; k < channels; k++){
-            float accum = 0;
-            for(int y = -Mask_radius; y < Mask_radius+1; y++){
-                for(int x = -Mask_radius; x < Mask_radius+1; y++){
-                    xOffset = col + x;
-                    yOffset = row + y;
-                    if (xOffset >= 0 && xOffset < width && yOffset >= 0 && yOffset < height){
-                        imagePixel = image[(yOffset * width + xOffset) * channels + k];
-                        maskValue = mask[(y+Mask_radius)*Mask_width+x+Mask_radius];
-                        accum += imagePixel * maskValue;
-                    }
-                }
-            }
-            out[(row * width + col)*channels + k] = clamp(accum);
-        }
+    // output row col
+    int row = by * TILE_WIDTH + ty;
+    int col = bx * TILE_WIDTH + tx;
+
+    // input row col
+    int row1 = row - Mask_radius;
+    int col1 = col - Mask_radius;
+
+    if(row1 >= 0 && row1 < height && col1 >= 0 && col1 < width){
+        subInput[ty][tx][tz] = image[(row1*width + col1)*channels + tz];
     }
+    else{
+        subInput[ty][tx][tz] = 0;
+    }
+    __syncthreads();
+    float ans = 0;
+    if(ty < TILE_WIDTH && tx < TILE_WIDTH && row < height && col < width){
+        for(int i = 0; i < Mask_width; i++){
+            for(int j = 0; j < Mask_width; j++){
+                ans += mask[i*Mask_width + j] * subInput[ty + i][tx + j][tz];
+            }
+        }
+        out[(row * width + col)*channels + tz] = clamp(ans);
+    }
+
 }
 
 int main(int argc, char *argv[]) {
@@ -105,7 +109,7 @@ int main(int argc, char *argv[]) {
 
   gpuTKTime_start(Compute, "Doing the computation on the GPU");
   //@@ INSERT CODE HERE
-  dim3 dimBlock(TILE_WIDTH, TILE_WIDTH); 
+  dim3 dimBlock(TILE_WIDTH, TILE_WIDTH, imageChannels); 
   dim3 dimGrid(ceil((float)imageWidth/TILE_WIDTH), ceil((float)imageHeight/TILE_WIDTH)); 
   convolution<<<dimGrid, dimBlock>>>(hostInputImageData, hostMaskData,
                                      hostOutputImageData, imageChannels,
