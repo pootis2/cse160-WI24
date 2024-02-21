@@ -12,43 +12,53 @@
 #define Mask_width 5
 #define Mask_radius Mask_width / 2
 #define TILE_WIDTH 16
-#define w (TILE_WIDTH + Mask_width - 1)
-#define clamp(x) (min(max((x), 0.0), 1.0))
+#define w (TILE_WIDTH + Mask_width - 1) //number of loads from global memory i think(width of block)
+#define clamp(x) (min(max((x), 0.0), 1.0)) // what is this used for?
 
 //@@ INSERT CODE HERE
-__global__ void convolution(float *image, const float * __restrict__ mask, float *out, int channels, int width, int height){
+__global__ void convolution(float *deviceInputImageData, const float * __restrict__ deviceMaskData,
+                            float* deviceOutputImageData, int imageChannels,
+                            int imageWidth, int imageHeight){
 
-    __shared__ float subInput[TILE_WIDTH][TILE_WIDTH][channels];
+    __shared__ float inputSharedMem[w][w]; //size is blockwidth x blockwidth, fit input into block (has the extra halo over the output)
 
-    int tx = threadIdx.x; int bx = blockIdx.x;
-    int ty = threadIdx.y; int by = blockIdx.y; 
-    int tz = threadIdx.z;
+      //blocks/threads in x and y direction
+      int threadX = threadIdx.x;
+      int threadY = threadIdx.y;
 
-    // output row col
-    int row = by * TILE_WIDTH + ty;
-    int col = bx * TILE_WIDTH + tx;
+      int rowOutput = blockIdx.y * TILE_WIDTH + threadY; //row for output/tile
+      int colOutput = blockIdx.x * TILE_WIDTH + threadX; //col for output/tile
 
-    // input row col
-    int row1 = row - Mask_radius;
-    int col1 = col - Mask_radius;
+      int rowInput = rowOutput - (Mask_width-1)/2; //row for input/block
+      int colInput = colOutput - (Mask_width-1)/2; //col for input/block
+      
 
-    if(row1 >= 0 && row1 < height && col1 >= 0 && col1 < width){
-        subInput[ty][tx][tz] = image[(row1*width + col1)*channels + tz];
-    }
-    else{
-        subInput[ty][tx][tz] = 0;
-    }
-    __syncthreads();
-    float ans = 0;
-    if(ty < TILE_WIDTH && tx < TILE_WIDTH && row < height && col < width){
-        for(int i = 0; i < Mask_width; i++){
-            for(int j = 0; j < Mask_width; j++){
-                ans += mask[i*Mask_width + j] * subInput[ty + i][tx + j][tz];
-            }
+    for(int i = 0; i < imageChannels; i++){
+      //put input block into shared Mem
+      if( (rowInput >= 0) && (rowInput < imageHeight) &&  (colInput >=0) && (colInput < imageWidth) ){
+        inputSharedMem[threadY][threadX] = deviceInputImageData[(rowInput*imageWidth + colInput)*imageChannels + i]; //this would not put the first element in (0,0) of shared Mem
+      }else{
+        inputSharedMem[threadY][threadX] = 0;
+      }
+
+      //wait for all the shared mem to be filled
+      __syncthreads();
+      float outValue = 0;
+
+      //now do the calculations for each tile  
+      if(threadY < TILE_WIDTH && threadX < TILE_WIDTH)
+      {
+        for(int row = 0; row < Mask_width; row++){
+          for(int col = 0; col < Mask_width; col++){
+            outValue += deviceMaskData[row*Mask_width + col] * inputSharedMem[threadY + row][(threadX + col)];
+          }
         }
-        out[(row * width + col)*channels + tz] = clamp(ans);
-    }
-
+      }
+      __syncthreads();
+      if(rowOutput < imageHeight && colOutput < imageWidth && threadY < TILE_WIDTH && threadX < TILE_WIDTH){
+        deviceOutputImageData[(rowOutput * imageWidth + colOutput)*imageChannels + i] = clamp(outValue);
+      }    
+    }    
 }
 
 int main(int argc, char *argv[]) {
@@ -93,28 +103,28 @@ int main(int argc, char *argv[]) {
 
   gpuTKTime_start(GPU, "Doing GPU memory allocation");
   //@@ INSERT CODE HERE
-  cudaMalloc((void **) &deviceInputImageData, imageWidth * imageHeight * imageChannels * sizeof(float));
-  cudaMalloc((void **) &deviceOutputImageData, imageWidth * imageHeight * imageChannels * sizeof(float));
-  cudaMalloc((void **) &deviceMaskData, maskColumns * maskRows * sizeof(float));
-
+  cudaMalloc( (void**) &deviceInputImageData, sizeof(float)*imageWidth*imageHeight*imageChannels);
+  cudaMalloc( (void**) &deviceOutputImageData, sizeof(float)*imageWidth*imageHeight*imageChannels);
+  cudaMalloc( (void**) &deviceMaskData, sizeof(float)*maskRows*maskColumns);
   gpuTKTime_stop(GPU, "Doing GPU memory allocation");
 
   gpuTKTime_start(Copy, "Copying data to the GPU");
   //@@ INSERT CODE HERE
-  cudaMemcpy(deviceInputImageData, hostInputImageData, imageWidth * imageHeight * imageChannels * sizeof(float), cudaMemcpyHostToDevice);
-  cudaMemcpy(deviceOutputImageData, hostOutputImageData, imageWidth * imageHeight * imageChannels * sizeof(float), cudaMemcpyHostToDevice);
-  cudaMemcpy(deviceMaskData, hostMaskData, maskColumns * maskRows * sizeof(float), cudaMemcpyHostToDevice);
+  cudaMemcpy(deviceInputImageData, hostInputImageData, sizeof(float)*imageChannels*imageWidth*imageHeight, cudaMemcpyHostToDevice);
+  cudaMemcpy(deviceOutputImageData, hostOutputImageData, sizeof(float)*imageChannels*imageHeight*imageHeight, cudaMemcpyHostToDevice);
+  cudaMemcpy(deviceMaskData, hostMaskData, sizeof(float)*maskColumns*maskRows, cudaMemcpyHostToDevice);
 
   gpuTKTime_stop(Copy, "Copying data to the GPU");
 
   gpuTKTime_start(Compute, "Doing the computation on the GPU");
   //@@ INSERT CODE HERE
-  dim3 dimBlock(TILE_WIDTH, TILE_WIDTH, imageChannels); 
-  dim3 dimGrid(ceil((float)imageWidth/TILE_WIDTH), ceil((float)imageHeight/TILE_WIDTH)); 
-  convolution<<<dimGrid, dimBlock>>>(hostInputImageData, hostMaskData,
-                                     hostOutputImageData, imageChannels,
-                                     imageWidth, imageHeight);
+  dim3 dimBlock(w, w, 1);
 
+  dim3 dimGrid(ceil(imageWidth/(1.0*TILE_WIDTH)), ceil(imageHeight/(1.0*TILE_WIDTH)), 1);
+
+ convolution<<<dimGrid, dimBlock>>>(deviceInputImageData, deviceMaskData,
+                                    deviceOutputImageData, imageChannels,
+                                    imageWidth, imageHeight);
   gpuTKTime_stop(Compute, "Doing the computation on the GPU");
 
   gpuTKTime_start(Copy, "Copying data from the GPU");
