@@ -90,6 +90,32 @@ Use the `make run` command to test your program. There are a total of 7 tests on
 
 The dataset required to test the program is already generated. If you are interested in how the dataset is generated please refer to the `dataset_generator.cpp` file. You may compile this file using the `make dataset_generator` command and run the executable using the command `./dataset_generator`. 
 
+## Extra Credit (optional)
+
+We have provided you an additional `make run_big` you can execute for larger images and larger kernel sizes.  If you successfully implement both cases, we will consider your execution time for the leaderboard.  You can test your execution time locally by running `make time`.
+
+To complete this task, you will have to make your kernel size dynamic, meaning you can no longer use the following lines:
+
+```
+#define Mask_width 5
+#define Mask_radius Mask_width / 2
+```
+
+Consider how you can replace these with a dynamic version.
+
+Feel free to remove
+```
+  assert(maskRows == 5);    /* mask height is fixed to 5 in this mp */
+  assert(maskColumns == 5); /* mask width is fixed to 5 in this mp */
+```
+as these lines are no longer relevant in our greater than 5x5 world.
+
+For the autograder to time your kernel function, it must be called `convolution`.  The profiler does not consider arguments passed into it as part of the signature.  That said, a signature we used that worked was
+```
+__global__ void convolution(float *deviceInputImageData, const float * __restrict__ deviceMaskData,
+                            float *deviceOutputImageData, int imageChannels, int imageWidth, int imageHeight, int maskRows, int maskColumns)
+```
+
 ## Submission
 
 Submit the template.cu file on gradescope. Preserve the file name before uploading to gradescope.
